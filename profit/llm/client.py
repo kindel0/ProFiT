@@ -179,3 +179,4 @@ class OpenAIClient(LLMClient):
             raise ValueError(f"Received invalid JSON patch from OpenAI response: {e}\nResponse content: {json_patch_str}")
 # Register the mock client for testing and demonstration
 register_client("mock", MockLLMClient)
+register_client("openai", OpenAIClient)
