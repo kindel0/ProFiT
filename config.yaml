@@ -1,0 +1,14 @@
+# config.yaml
+data:
+  path: "./tests/data/long_sample_data.csv"
+  asset: "BTC-USD"
+ga:
+  population_size: 50
+  generations: 10
+objectives:
+  - "sharpe_ratio"
+  - "annualized_return"
+  - "expectancy"
+llm:
+  client: "" # No LLM client for this example
+  model: ""

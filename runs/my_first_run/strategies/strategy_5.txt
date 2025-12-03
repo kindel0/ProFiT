@@ -1,0 +1,19 @@
+Strategy Chromosome:
+{
+  "parameters": {
+    "fast_ma": 16,
+    "slow_ma": 27
+  },
+  "rules": [
+    {
+      "condition": "c1",
+      "action": "enter_long"
+    }
+  ],
+  "features": {
+    "c1": "sma(17) > sma(20)"
+  }
+}
+
+Fitness:
+{'sharpe_ratio': 0.18743735846542742, 'annualized_return': 0.016625584518868974, 'expectancy': 0.00741507677773994}

@@ -1,0 +1,13 @@
+data:
+  path: "./data/my_clean_btc_data.parquet"
+  asset: "BTC-USD"
+ga:
+  population_size: 100
+  generations: 50
+objectives:
+  - "sharpe_ratio"
+  - "annualized_return"
+  - "expectancy"
+llm:
+  client: "openai"
+  model: "gpt-4-turbo"
