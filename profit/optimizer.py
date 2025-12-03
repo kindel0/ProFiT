@@ -28,7 +28,7 @@ def _create_random_chromosome() -> Chromosome:
     return Chromosome(
         parameters={"fast_ma": fast_ma, "slow_ma": slow_ma},
         rules=[Rule(condition="c1", action="enter_long")],
-        features={"c1": f"sma({fast_ma}) > sma({slow_ma})"},
+        features={"c1": "sma(close, fast_ma) > sma(close, slow_ma)"},
     )
 
 

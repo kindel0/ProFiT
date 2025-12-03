@@ -107,5 +107,5 @@ class CSVProvider(DataProvider):
         Raises:
             FileNotFoundError: If the file at `self._path` does not exist.
         """
-        df = pd.read_csv(self._path, index_col=0, parse_dates=True)
+        df = pd.read_csv(self._path, index_col=0, parse_dates=True, date_format="%Y-%m-%d")
         return self._validate(df)

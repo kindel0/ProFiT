@@ -59,3 +59,17 @@ class Chromosome(BaseModel):
         ...,
         description="Feature definitions as expression strings (e.g., {'c1': 'close > sma(close, 200)'})."
     )
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "Chromosome":
+        """
+        Creates a Chromosome instance from a JSON string.
+
+        Args:
+            json_str (str): A JSON string representing a Chromosome.
+
+        Returns:
+            Chromosome: A Chromosome instance.
+        """
+        return cls.model_validate_json(json_str)
+

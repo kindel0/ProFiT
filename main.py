@@ -29,7 +29,7 @@ def main():
 
     # 3. Generate the final report
     print("Optimization complete. Generating report...")
-    report_dir = "runs/my_first_run"
+    report_dir = "runs/btc"
     results.generate_report(output_dir=report_dir, objectives=config.objectives)
     print(f"Report generated in '{report_dir}'.")
 

@@ -1,10 +1,10 @@
 # config.yaml
 data:
-  path: "./tests/data/long_sample_data.csv"
+  path: "./tests/data/Bitcoin_historical_data_coinmarketcap.csv"
   asset: "BTC-USD"
 ga:
   population_size: 50
-  generations: 10
+  generations: 100
 objectives:
   - "sharpe_ratio"
   - "annualized_return"

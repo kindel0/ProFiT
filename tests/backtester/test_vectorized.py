@@ -44,7 +44,7 @@ def sample_chromosome() -> Chromosome:
     return Chromosome(
         parameters={"fast_ma": 5, "slow_ma": 20},
         rules=[Rule(condition="c1", action="enter_long")], # Rules not used by this simple backtester yet
-        features={"c1": "sma(5) > sma(20)"}, # Features not used by this simple backtester yet
+        features={"c1": "sma(close, fast_ma) > sma(close, slow_ma)"},
     )
 
 

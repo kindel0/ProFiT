@@ -24,7 +24,7 @@ def register_client(name: str, client_class: Type["LLMClient"]):
         client_class (Type["LLMClient"]): The client class to register.
     """
     if name in CLIENT_REGISTRY:
-        return # Client already registered, do nothing.
+        raise ValueError(f"LLM Client '{name}' is already registered.")
     CLIENT_REGISTRY[name] = client_class
 
 
@@ -254,5 +254,4 @@ class OpenAIClient(LLMClient):
 
 # Register the mock client for testing and demonstration
 register_client("mock", MockLLMClient)
-register_client("openai", OpenAIClient)
 register_client("openai", OpenAIClient)

@@ -6,12 +6,13 @@ for strategies that are not path-dependent, meaning the decision at any given
 time step only depends on the data at that time step, not on the sequence of
 trades that came before.
 """
+from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
 from profit.backtester.base import BaseBacktester
+from profit.backtester.expression_parser import parse_expression
 from profit.backtester.results import BacktestResult, Trade
-from profit.indicators import factory as indicator_factory
 from profit.metrics import (
     calculate_annualized_return,
     calculate_expectancy,
@@ -29,31 +30,61 @@ class VectorizedBacktester(BaseBacktester):
         """
         Runs a vectorized backtest for the given strategy chromosome.
 
-        This implementation is a simplified example that assumes a strategy
-        based on a moving average crossover. It is a placeholder for the more
-        complex "expression tree" evaluation that will be needed for the full
-        GP engine.
+        This implementation dynamically evaluates features and rules defined
+        in the chromosome to generate trading signals.
 
         Args:
-            chromosome (Chromosome): The strategy to be backtested. It is
-                expected to have 'fast_ma' and 'slow_ma' in its 'parameters'.
+            chromosome (Chromosome): The strategy to be backtested.
 
         Returns:
             BacktestResult: An object containing the results of the backtest.
         """
-        # 1. Generate Signals (Placeholder for real strategy evaluation)
-        # This is a simplified example of generating a signal from features.
-        # The real implementation will evaluate the 'features' and 'rules'
-        # from the chromosome.
-        fast_ma_period = chromosome.parameters.get("fast_ma", 10)
-        slow_ma_period = chromosome.parameters.get("slow_ma", 30)
+        # Initialize a dictionary to store evaluated features
+        # Ensure it has an index for aligning with _data
+        evaluated_features = pd.DataFrame(index=self._data.index)
 
-        fast_ma = indicator_factory.sma(self._data["close"], length=fast_ma_period)
-        slow_ma = indicator_factory.sma(self._data["close"], length=slow_ma_period)
+        # 1. Evaluate Features
+        for feature_name, expression_str in chromosome.features.items():
+            parsed_expression = parse_expression(expression_str)
+            evaluated_features[feature_name] = parsed_expression.evaluate(self._data, chromosome.parameters)
+        
+        # Add basic price data to evaluated_features for rule evaluation
+        evaluated_features['close'] = self._data['close']
+        evaluated_features['open'] = self._data['open']
+        evaluated_features['high'] = self._data['high']
+        evaluated_features['low'] = self._data['low']
+        evaluated_features['volume'] = self._data['volume']
 
-        if fast_ma is None or slow_ma is None:
-            # Not enough data to compute indicators, return empty result
-            return BacktestResult(
+        # Initialize signal series (1 for long, -1 for short, 0 for flat)
+        signal = pd.Series(0, index=self._data.index, dtype=int)
+        
+        # 2. Evaluate Rules and Generate Signals
+        # This is a simplified approach. A more sophisticated system would handle
+        # multiple conflicting rules, position sizing, etc.
+        # For now, we apply rules sequentially.
+        for rule in chromosome.rules:
+            parsed_condition = parse_expression(rule.condition)
+            condition_result = parsed_condition.evaluate(evaluated_features, chromosome.parameters)
+
+            # Apply action based on condition
+            if rule.action == 'enter_long':
+                signal = pd.Series(np.where(condition_result, 1, signal), index=self._data.index)
+            elif rule.action == 'enter_short':
+                signal = pd.Series(np.where(condition_result, -1, signal), index=self._data.index)
+            elif rule.action == 'exit_position':
+                signal = pd.Series(np.where(condition_result, 0, signal), index=self._data.index)
+            # Add other actions as needed (e.g., exit_long, exit_short)
+        
+        # Shift signal to avoid lookahead bias and fill any NaNs
+        positions = signal.shift(1).ffill().fillna(0)
+        
+        # Ensure we start with 0 position if the first signal was not explicitly set
+        if not positions.empty and positions.iloc[0] != 0:
+            positions.iloc[0] = 0
+
+        # Handle cases where indicators might not have enough data to compute
+        if positions.isnull().all():
+             return BacktestResult(
                 trades=[],
                 equity_curve=pd.Series(
                     [self._initial_equity] * len(self._data), index=self._data.index
@@ -65,22 +96,15 @@ class VectorizedBacktester(BaseBacktester):
                 },
             )
 
-        # A simple signal: 1 for long, -1 for short
-        signal = pd.Series(np.where(fast_ma > slow_ma, 1, -1), index=self._data.index)
-        signal = signal.ffill().fillna(0) # Forward fill NaNs and then fill remaining with 0
-
-        # 2. Determine Positions
-        # We assume we are always in the market based on the signal.
-        # A real backtester would handle entries/exits more granularly.
-        positions = signal.shift(1) # Shift to avoid lookahead bias
-
         # 3. Calculate Returns
         asset_returns = self._data["close"].pct_change()
         strategy_returns = positions * asset_returns
+        strategy_returns.fillna(0, inplace=True) # Fill NaNs from shifting or initial periods
 
         # 4. Generate Equity Curve
         equity_curve = self._initial_equity * (1 + strategy_returns).cumprod()
-        equity_curve.iloc[0] = self._initial_equity # Start with initial equity
+        if not equity_curve.empty:
+            equity_curve.iloc[0] = self._initial_equity # Start with initial equity
 
         # 5. Extract Trades
         trades = self._extract_trades(positions)
@@ -88,9 +112,9 @@ class VectorizedBacktester(BaseBacktester):
         # 6. Calculate Metrics
         trade_returns = pd.Series([t.return_pct for t in trades])
         metrics = {
-            "sharpe_ratio": calculate_sharpe_ratio(strategy_returns),
-            "annualized_return": calculate_annualized_return(equity_curve),
-            "expectancy": calculate_expectancy(trade_returns),
+            "sharpe_ratio": calculate_sharpe_ratio(strategy_returns) if not strategy_returns.empty else 0.0,
+            "annualized_return": calculate_annualized_return(equity_curve) if not equity_curve.empty else 0.0,
+            "expectancy": calculate_expectancy(trade_returns) if not trade_returns.empty else 0.0,
         }
 
         # 7. Return BacktestResult
@@ -106,14 +130,17 @@ class VectorizedBacktester(BaseBacktester):
         """
         trades = []
         last_pos = 0.0
-        entry_time, entry_price = None, None
+        entry_time: Any = None
+        entry_price: Optional[float] = None
 
-        for time in positions.index:
-            pos = positions.loc[time]
+        # Iterate through the index of positions, ensuring we use the original data's index for prices
+        for i in range(len(positions)):
+            time = positions.index[i]
+            pos = positions.iloc[i]
+
             if pos != last_pos:
                 # Position has changed, a trade occurred
-                if last_pos != 0 and entry_time is not None:
-                    assert entry_price is not None
+                if last_pos != 0 and entry_time is not None and entry_price is not None:
                     # Exit previous trade
                     exit_price = float(self._data.loc[time, "open"]) # Exit at next bar's open
                     return_pct = (exit_price / entry_price - 1) * last_pos
@@ -136,7 +163,8 @@ class VectorizedBacktester(BaseBacktester):
 
         # Close any open trade at the end of the data
         if entry_time is not None and last_pos != 0:
-            assert entry_price is not None
+            if entry_price is None:
+                raise ValueError("entry_price cannot be None for an open trade.")
             exit_time = self._data.index[-1]
             exit_price = float(self._data.loc[exit_time, "close"]) # Exit at last bar's close
             return_pct = (exit_price / entry_price - 1) * last_pos
