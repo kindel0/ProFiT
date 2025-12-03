@@ -1,6 +1,7 @@
 """
 Abstract base class and mock implementation for LLM clients.
 """
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Type
 
@@ -23,7 +24,7 @@ def register_client(name: str, client_class: Type["LLMClient"]):
         client_class (Type["LLMClient"]): The client class to register.
     """
     if name in CLIENT_REGISTRY:
-        raise ValueError(f"LLM Client '{name}' is already registered.")
+        return # Client already registered, do nothing.
     CLIENT_REGISTRY[name] = client_class
 
 
@@ -39,7 +40,9 @@ def get_client(name: str, **kwargs) -> "LLMClient":
         LLMClient: An instance of the requested client.
     """
     if name not in CLIENT_REGISTRY:
-        raise ValueError(f"LLM Client '{name}' is not registered. Available: {list(CLIENT_REGISTRY.keys())}")
+        raise ValueError(
+            f"LLM Client '{name}' is not registered. Available: {list(CLIENT_REGISTRY.keys())}"
+        )
     client_class = CLIENT_REGISTRY[name]
     return client_class(**kwargs)
 
@@ -47,7 +50,7 @@ def get_client(name: str, **kwargs) -> "LLMClient":
 class LLMClient(ABC):
     """
     Abstract base class for all Large Language Model clients.
-    
+
     This class defines the interface for generating a JSON patch to mutate a
     strategy's chromosome based on its performance.
     """
@@ -75,7 +78,7 @@ class LLMClient(ABC):
 class MockLLMClient(LLMClient):
     """
     A mock LLM client for testing purposes.
-    
+
     This client returns a predefined JSON patch to facilitate predictable
     tests without making actual LLM API calls.
     """
@@ -83,7 +86,7 @@ class MockLLMClient(LLMClient):
     def __init__(self, patch: jsonpatch.JsonPatch = None):
         """
         Initializes the mock client with a specific patch to return.
-        
+
         Args:
             patch (jsonpatch.JsonPatch): The patch to be returned by
                 `generate_patch`. Defaults to an empty patch.
@@ -107,13 +110,31 @@ class MockLLMClient(LLMClient):
         """
         return self._patch
 
+
 class OpenAIClient(LLMClient):
     """
     An example implementation of an LLM client using OpenAI's API.
-    
+
     Note: This is a placeholder implementation. Actual API calls and logic
     to generate patches based on model responses should be implemented.
     """
+
+    _SYSTEM_PROMPT_TEMPLATE = (
+        "You are an expert in financial trading strategies and genetic algorithms. "
+        "Your task is to analyze a strategy's performance and propose improvements "
+        "by generating a JSON patch (RFC 6902) that mutates its chromosome. "
+        "The goal is to optimize for Sharpe Ratio, Annualized Return, and Expectancy per Trade. "
+        "The output MUST be a valid JSON object representing the JSON patch."
+    )
+
+    _USER_PROMPT_TEMPLATE = (
+        "Given the following strategy chromosome and its performance metrics, "
+        "propose mutations to improve its performance according to the stated objectives. "
+        "Return the mutations as a JSON patch.\n\n"
+        "Chromosome: {chromosome_json}\n"
+        "Performance Metrics: {performance_metrics_json}"
+    )
+
     def __init__(self, model: str = "gpt-4"):
         """
         Initializes the OpenAI client.
@@ -151,21 +172,13 @@ class OpenAIClient(LLMClient):
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are an expert in financial trading strategies and genetic algorithms. "
-                        "Your task is to analyze a strategy's performance and propose improvements "
-                        "by generating a JSON patch (RFC 6902) that mutates its chromosome. "
-                        "The output MUST be a valid JSON object representing the JSON patch."
-                    ),
+                    "content": self._SYSTEM_PROMPT_TEMPLATE,
                 },
                 {
                     "role": "user",
-                    "content": (
-                        "Given the following strategy chromosome and its performance metrics, "
-                        "propose mutations to improve its performance. "
-                        "Return the mutations as a JSON patch.\n\n"
-                        f"Chromosome: {chromosome.model_dump_json()}\n"
-                        f"Performance Metrics: {performance_metrics}"
+                    "content": self._USER_PROMPT_TEMPLATE.format(
+                        chromosome_json=chromosome.model_dump_json(),
+                        performance_metrics_json=performance_metrics,
                     ),
                 },
             ],
@@ -176,7 +189,12 @@ class OpenAIClient(LLMClient):
             patch = jsonpatch.JsonPatch.from_string(json_patch_str)
             return patch
         except jsonpatch.JsonPatchException as e:
-            raise ValueError(f"Received invalid JSON patch from OpenAI response: {e}\nResponse content: {json_patch_str}")
+            raise ValueError(
+                f"Received invalid JSON patch from OpenAI response: {e}\nResponse content: {json_patch_str}"
+            )
+
+
 # Register the mock client for testing and demonstration
 register_client("mock", MockLLMClient)
+register_client("openai", OpenAIClient)
 register_client("openai", OpenAIClient)
