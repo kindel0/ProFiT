@@ -1,7 +1,6 @@
 # ProFiT: Program Search for Financial Trading
 
-This repository contains a reproduction of the **ProFiT framework** as described in the research paper *"ProFiT: Program Search for Financial Trading"*.
-
+This repository contains a reproduction of the **ProFiT framework** as described in the research paper [*"ProFiT: Program Search for Financial Trading"*](https://www.researchgate.net/publication/398248186_ProFiT_Program_Search_for_Financial_Trading).<br>
 ProFiT is an LLM-driven evolutionary search algorithm that autonomously discovers and improves algorithmic trading strategies. It uses a closed feedback loop where an LLM analyzes strategy performance on backtests and proposes code-level improvements.
 
 ## Key Features
@@ -10,7 +9,7 @@ ProFiT is an LLM-driven evolutionary search algorithm that autonomously discover
 *   **Code-Level Search**: Strategies are represented as executable Python code, not abstract parameters.
 *   **Self-Repair**: Includes a repair loop where the LLM fixes syntax or runtime errors based on tracebacks.
 *   **Walk-Forward Validation**: Implements the specific 5-fold time-series split described in the paper.
-*   **Robust Backtesting**: Uses `backtesting.py` (via `lucit-backtesting`) with realistic constraints ($10k capital, 0.2% commission, exclusive orders).
+*   **Robust Backtesting**: Uses `backtesting.py` (via `lucit-backtesting`) with realistic constraints ( 0.2% commission, exclusive orders).
 
 ## Installation
 
@@ -18,8 +17,6 @@ This project is managed with `uv`.
 
 1.  **Install dependencies:**
     ```bash
-    uv pip sync requirements.txt
-    # OR if using pyproject.toml directly
     uv sync
     ```
 
