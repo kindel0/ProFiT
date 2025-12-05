@@ -1,8 +1,8 @@
 Strategy Chromosome:
 {
   "parameters": {
-    "fast_ma": 18,
-    "slow_ma": 27
+    "fast_ma": 16,
+    "slow_ma": 37
   },
   "rules": [
     {
@@ -11,9 +11,9 @@ Strategy Chromosome:
     }
   ],
   "features": {
-    "c1": "sma(17) > sma(20)"
+    "c1": "sma(15) > sma(37)"
   }
 }
 
 Fitness:
-{'sharpe_ratio': 1.4667737959567342, 'annualized_return': 0.21671680933745874, 'expectancy': 0.004914030470756657}
+{'sharpe_ratio': -0.03157360804292485, 'annualized_return': -0.07694767788552104, 'expectancy': 0.015306277885733945}
