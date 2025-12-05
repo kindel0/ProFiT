@@ -8,6 +8,9 @@ wheels/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
-
+runs/*
 # Virtual environments
 .venv
+run_backtest.py
+TODO.md
+*.pdf
