@@ -17,7 +17,7 @@ class BaseBacktester(ABC):
     strategy and dataset.
     """
 
-    def __init__(self, data: pd.DataFrame, initial_equity: float = 100000.0):
+    def __init__(self, data: pd.DataFrame, initial_equity: float = 200000.0):
         """
         Initializes the backtester.
 

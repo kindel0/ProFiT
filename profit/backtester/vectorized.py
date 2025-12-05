@@ -74,6 +74,13 @@ class VectorizedBacktester(BaseBacktester):
             elif rule.action == 'exit_position':
                 signal = pd.Series(np.where(condition_result, 0, signal), index=self._data.index)
             # Add other actions as needed (e.g., exit_long, exit_short)
+
+        # Check for Stop Loss or Take Profit parameters
+        sl_pct = chromosome.parameters.get("stop_loss_pct")
+        tp_pct = chromosome.parameters.get("take_profit_pct")
+
+        if sl_pct is not None or tp_pct is not None:
+            return self._run_iterative(signal, sl_pct, tp_pct)
         
         # Shift signal to avoid lookahead bias and fill any NaNs
         positions = signal.shift(1).ffill().fillna(0)
@@ -121,6 +128,180 @@ class VectorizedBacktester(BaseBacktester):
         return BacktestResult(
             trades=trades,
             equity_curve=equity_curve,
+            metrics=metrics,
+        )
+
+    def _run_iterative(self, signal: pd.Series, sl_pct: Optional[float], tp_pct: Optional[float]) -> BacktestResult:
+        """
+        Runs an iterative backtest to support path-dependent logic like Stop Loss/Take Profit.
+        """
+        # Prepare data for fast iteration
+        opens = self._data['open'].values
+        highs = self._data['high'].values
+        lows = self._data['low'].values
+        closes = self._data['close'].values
+        times = self._data.index
+        n = len(self._data)
+
+        # State
+        cash = self._initial_equity
+        shares = 0.0
+        entry_price = 0.0
+        entry_time: Any = None
+        
+        trades: list[Trade] = []
+        equity_curve = np.zeros(n)
+        
+        # Iterate through bars
+        for i in range(n):
+            current_time = times[i]
+            current_open = opens[i]
+            
+            # 1. Signal Execution (at Open)
+            # We look at the signal generated at i-1 to decide action at Open[i]
+            target_pos = 0
+            if i > 0:
+                target_pos = signal.iloc[i-1]
+            
+            # Current position direction (1, -1, 0)
+            current_dir = 1 if shares > 0 else (-1 if shares < 0 else 0)
+            
+            # If signal changed, execute at Open
+            if current_dir != target_pos:
+                # Close existing
+                if current_dir != 0:
+                    exit_price = current_open
+                    position_value = shares * exit_price
+                    cash += position_value # Close position, convert to cash
+                    
+                    # Trade Record
+                    ret_pct = (exit_price / entry_price - 1) * current_dir
+                    trades.append(Trade(
+                        entry_time=entry_time,
+                        exit_time=current_time,
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        return_pct=ret_pct,
+                        size=abs(shares)
+                    ))
+                    
+                    shares = 0.0
+                    current_dir = 0
+                
+                # Open new
+                if target_pos != 0:
+                    # Calculate total equity to size position
+                    # Equity = cash (since shares is 0)
+                    total_equity = cash 
+                    
+                    # Simple sizing: 100% equity
+                    position_value = total_equity
+                    
+                    # Calculate shares
+                    # Long: shares = value / price
+                    # Short: shares = - value / price
+                    shares = (position_value / current_open) * target_pos
+                    
+                    # Update Cash
+                    # Long: Pay cash. cash -= value.
+                    # Short: Receive cash. cash += value.
+                    # Note: shares has sign.
+                    # cash -= shares * current_open
+                    # Long: cash -= (val/p)*p = -val. Correct.
+                    # Short: cash -= (-val/p)*p = +val. Correct.
+                    cash -= shares * current_open
+                    
+                    entry_price = current_open
+                    entry_time = current_time
+                    current_dir = target_pos
+
+            # 2. Intra-bar Checks (SL/TP)
+            # Only if we have a position
+            if shares != 0:
+                hit_exit = False
+                exit_price = 0.0
+                
+                if shares > 0: # Long
+                    sl_price = entry_price * (1 - sl_pct) if sl_pct else -np.inf
+                    tp_price = entry_price * (1 + tp_pct) if tp_pct else np.inf
+                    
+                    if lows[i] <= sl_price:
+                        exit_price = min(current_open, sl_price) # Gap check
+                        hit_exit = True
+                    elif highs[i] >= tp_price:
+                        exit_price = max(current_open, tp_price)
+                        hit_exit = True
+                        
+                elif shares < 0: # Short
+                    sl_price = entry_price * (1 + sl_pct) if sl_pct else np.inf
+                    tp_price = entry_price * (1 - tp_pct) if tp_pct else -np.inf
+                    
+                    if highs[i] >= sl_price:
+                        exit_price = max(current_open, sl_price) # Gap check (buy stop)
+                        hit_exit = True
+                    elif lows[i] <= tp_price:
+                        exit_price = min(current_open, tp_price)
+                        hit_exit = True
+
+                if hit_exit:
+                    # Execute Exit
+                    # Update Cash
+                    cash += shares * exit_price
+                    
+                    # Record Trade
+                    ret_pct = (exit_price / entry_price - 1) * (1 if shares > 0 else -1)
+                    trades.append(Trade(
+                        entry_time=entry_time,
+                        exit_time=current_time,
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        return_pct=ret_pct,
+                        size=abs(shares)
+                    ))
+                    
+                    shares = 0.0
+                    current_dir = 0
+                    # We are now flat for the remainder of the bar (Mark to Market will use Cash)
+
+            # 3. Mark to Market (End of Bar)
+            # Equity = Cash + Market Value of Shares
+            # Long: Val = shares * close.
+            # Short: Val = shares * close. (shares is neg, close is pos -> neg value, liability).
+            # Equity = Cash + (shares * close).
+            # Example Short: Cash = 2000 (1000 init + 1000 proceeds). Shares = -10. Close = 90.
+            # Val = -900. Equity = 2000 - 900 = 1100. Profit 100. Correct.
+            
+            current_equity = cash + (shares * closes[i])
+            equity_curve[i] = current_equity
+        
+        # Close open trade at end
+        if shares != 0:
+            exit_price = closes[-1]
+            cash += shares * exit_price
+            ret_pct = (exit_price / entry_price - 1) * (1 if shares > 0 else -1)
+            trades.append(Trade(
+                entry_time=entry_time,
+                exit_time=times[-1],
+                entry_price=entry_price,
+                exit_price=exit_price,
+                return_pct=ret_pct,
+                size=abs(shares)
+            ))
+            shares = 0.0
+
+        # Create result objects
+        equity_series = pd.Series(equity_curve, index=times)
+        returns_series = equity_series.pct_change().fillna(0)
+        
+        metrics = {
+            "sharpe_ratio": calculate_sharpe_ratio(returns_series) if not returns_series.empty else 0.0,
+            "annualized_return": calculate_annualized_return(equity_series) if not equity_series.empty else 0.0,
+            "expectancy": calculate_expectancy(pd.Series([t.return_pct for t in trades])) if trades else 0.0,
+        }
+
+        return BacktestResult(
+            trades=trades,
+            equity_curve=equity_series,
             metrics=metrics,
         )
 

@@ -40,6 +40,11 @@ class Variable(Expression):
             return data[self.name]
         if self.name in parameters:
             return parameters[self.name]
+
+        # Return False for undefined conditions (e.g., c4)
+        if re.fullmatch(r'c\d+', self.name):
+            return False
+
         raise ValueError(f"Undefined variable or column: {self.name}")
 
 class FunctionCall(Expression):
