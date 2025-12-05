@@ -1,14 +1,12 @@
 # config.yaml
 data:
-  path: "./tests/data/Bitcoin_historical_data_coinmarketcap.csv"
+  path: "tests/data/Bitcoin_historical_data_coinmarketcap.csv"
   asset: "BTC-USD"
 ga:
-  population_size: 50
-  generations: 100
+  population_size: 10 # Not used in steady-state ProFiT, but kept for config compatibility
+  generations: 3 # Number of mutation steps
 objectives:
-  - "sharpe_ratio"
   - "annualized_return"
-  - "expectancy"
 llm:
-  client: "" # No LLM client for this example
-  model: ""
+  client: "mock" # Use "openai" for real runs
+  model: "gpt-4o"

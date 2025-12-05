@@ -1,116 +1,71 @@
-# ProFiT: A Hybrid GA-LLM Framework for Financial Strategy Optimization
+# ProFiT: Program Search for Financial Trading
 
-![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)
-![Code Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)
+This repository contains a reproduction of the **ProFiT framework** as described in the research paper *"ProFiT: Program Search for Financial Trading"*.
 
-ProFiT (PROgrammatic FInancial-strategy-Tuning) is a desktop-first Python framework designed for quantitative researchers to discover, backtest, and optimize sophisticated financial trading strategies. It leverages a hybrid approach combining the evolutionary power of Genetic Algorithms (GA) and Genetic Programming (GP) with the contextual, pattern-matching capabilities of Large Language Models (LLM).
+ProFiT is an LLM-driven evolutionary search algorithm that autonomously discovers and improves algorithmic trading strategies. It uses a closed feedback loop where an LLM analyzes strategy performance on backtests and proposes code-level improvements.
 
-This framework is built for **power users** who need a robust, reproducible, and highly customizable environment for serious quantitative research.
+## Key Features
 
-## Core Concepts
-
-*   **Hybrid Evolutionary Engine:** ProFiT doesn't just tune parameters. It evolves the very logic of trading strategies. The GA/GP engine mutates rules and invents new features, while the LLM acts as a "domain expert," suggesting intelligent mutations based on a strategy's performance profile.
-*   **Genetic Programming for Feature Discovery:** Instead of being limited to a fixed set of indicators, ProFiT’s GP engine can generate novel features by creating mathematical expression trees from raw `OHLCV` data (e.g., `(high - low) / close`).
-*   **Safe LLM Integration:** The LLM does not generate executable code. It returns a structured **JSON Patch** containing proposed modifications. This makes a strategy's evolution safe, inspectable, and deterministic.
-*   **Reproducibility First:** Every component—from data handling to configuration—is designed for perfect run reproducibility. Experiments are defined in version-controllable YAML files and results are tied to specific run IDs.
-
-## Features
-
-*   **Multi-Objective Optimization:** Optimize strategies across a user-defined Pareto front using the NSGA-II algorithm. The default objectives are Sharpe Ratio, Annualized Return, and Expectancy.
-*   **Event-Driven Backtester:** A realistic simulator that can model transaction costs, slippage, and latency.
-*   **LLM Agnostic:** Use any LLM (OpenAI, an open-source model via Hugging Face, etc.) through a simple client interface.
-*   **Parallelized Performance:** Leverages `Ray` or `multiprocessing` to distribute backtesting across all available CPU cores for rapid evaluation of GA populations.
-*   **Extensible by Design:** A simple plugin architecture allows users to easily add their own indicators, fitness objectives, and LLM clients.
-*   **Comprehensive Reporting:** Automatically generates static `.png` reports for each run, including:
-    *   3D Pareto Front plots
-    *   Fitness convergence charts
-    *   Detailed strategy tearsheets with equity curves, drawdown plots, and performance metrics.
-*   **Detailed Observability:** Structured logging, metrics, and strategy lineage tracking provide deep insight into the evolutionary process.
+*   **LLM-Driven Evolution**: Uses Large Language Models (e.g., GPT-4) to act as both "Analyst" and "Developer" to mutate trading strategies.
+*   **Code-Level Search**: Strategies are represented as executable Python code, not abstract parameters.
+*   **Self-Repair**: Includes a repair loop where the LLM fixes syntax or runtime errors based on tracebacks.
+*   **Walk-Forward Validation**: Implements the specific 5-fold time-series split described in the paper.
+*   **Robust Backtesting**: Uses `backtesting.py` (via `lucit-backtesting`) with realistic constraints ($10k capital, 0.2% commission, exclusive orders).
 
 ## Installation
 
-ProFiT uses `uv` for ultra-fast project and virtual environment management.
+This project is managed with `uv`.
 
-1.  **Install `uv`** (if you haven't already):
+1.  **Install dependencies:**
     ```bash
-    # On macOS / Linux
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-
-    # On Windows
-    powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+    uv pip sync requirements.txt
+    # OR if using pyproject.toml directly
+    uv sync
     ```
 
-2.  **Clone the Repository:**
+2.  **Set up Environment:**
+    If using the OpenAI client, set your API key:
     ```bash
-    git clone https://github.com/your-org/ProFiT.git
-    cd ProFiT
+    export OPENAI_API_KEY="sk-..."
     ```
 
-3.  **Create and Activate Virtual Environment:**
-    ```bash
-    uv venv
-    source .venv/bin/activate
-    ```
+## Configuration
 
-4.  **Install Dependencies:**
-    ```bash
-    uv 
-    ```
+Edit `config.yaml` to control the experiment parameters:
 
-## Quick Start
+```yaml
+data:
+  path: "tests/data/Bitcoin_historical_data_coinmarketcap.csv"
+ga:
+  generations: 15  # Number of evolutionary steps
+llm:
+  client: "openai" # "openai" or "mock"
+  model: "gpt-4o"
+```
 
-1.  **Configure Your Run:** Create a `config.yaml` file to define your experiment. Set your LLM API keys as environment variables (e.g., `OPENAI_API_KEY`).
+## Running the Reproduction
 
-    ```yaml
-    # config.yaml
-    data:
-      path: "./data/my_clean_btc_data.parquet"
-      asset: "BTC-USD"
-    ga:
-      population_size: 100
-      generations: 50
-    objectives:
-      - "sharpe_ratio"
-      - "annualized_return"
-      - "expectancy"
-    llm:
-      client: "openai"
-      model: "gpt-4-turbo"
-    ```
+To run the standard experiment (Seed: Bollinger, Fold: 0):
 
-2.  **Run the Optimizer:** Create a `main.py` file to launch the framework.
+```bash
+python main.py
+```
 
-    ```python
-    # main.py
-    import profit
-    import os
+Results will be saved to `runs/reproduction_run`, including the generated strategy code and fitness plots.
 
-    # Set API key from environment variable
-    # The client will automatically pick it up
-    # os.environ["OPENAI_API_KEY"] = "sk-..."
+## Project Structure
 
-    # 1. Load configuration from file
-    config = profit.load_config("config.yaml")
+*   `profit/optimizer.py`: The core ProFiT evolutionary loop (Algorithm 1).
+*   `profit/llm/client.py`: LLM interaction logic (Analysis, Improvement, Repair prompts).
+*   `profit/seed_strategies.py`: The 5 initial seed strategies and baselines.
+*   `profit/backtester/lucit_adapter.py`: Adapter for the backtesting engine.
+*   `profit/strategy.py`: Definition of the code-based Chromosome.
 
-    # 2. Create and run the optimizer
-    optimizer = profit.Optimizer(config)
-    results = optimizer.run()
+## Differences from Original Paper
 
-    # 3. Generate the final report
-    print("Optimization complete. Generating report...")
-    results.generate_report(output_dir="runs/my_first_run")
-    print("Report generated in 'runs/my_first_run'.")
-    ```
-
-3.  **Execute the Run:**
-    ```bash
-    python main.py
-    ```
-
-This will start the optimization process. Upon completion, you will find all logs, metrics, and visualization charts in the `runs/my_first_run/` directory.
+*   This implementation currently runs on a single Fold per execution (configurable in `main.py`).
+*   Default config uses a Mock LLM for safety; switch to "openai" for real reproduction.
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+MIT

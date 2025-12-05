@@ -1,4 +1,3 @@
-# Python-generated files
 __pycache__/
 *.py[oc]
 build/
@@ -9,8 +8,8 @@ wheels/
 .mypy_cache/
 .pytest_cache/
 runs/*
-# Virtual environments
 .venv
 run_backtest.py
 TODO.md
 *.pdf
+.vscode/
