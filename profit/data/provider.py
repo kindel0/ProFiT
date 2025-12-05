@@ -68,6 +68,7 @@ class DataProvider(ABC):
         if not isinstance(df.index, pd.DatetimeIndex):
             raise ValueError("DataFrame must have a DatetimeIndex.")
 
+        df = df.sort_index()
         return df
 
 
