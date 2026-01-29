@@ -9,6 +9,7 @@ from profit.backtester.lucit_adapter import LucitBacktester
 from profit.config import Config
 from profit.data.provider import CSVProvider, ParquetProvider, DataProvider
 from profit.ga.individual import Individual
+from profit.ga.selection import select_nsga2, dominates, crowding_distance_assignment, fast_non_dominated_sort
 from profit.llm.client import get_client
 from profit.strategy import Chromosome
 from profit.results import Results
@@ -120,8 +121,82 @@ class Optimizer:
         return self._evaluate(self.test_backtester, individual.chromosome)
 
     def _get_best_individual(self) -> Individual:
-        """Returns the best individual in the population by training fitness."""
-        return max(self.population, key=lambda ind: ind.fitness.get("annualized_return", -100))
+        """Returns the best individual in the population.
+
+        For single objective: returns individual with highest annualized_return.
+        For multi-objective: returns a random individual from the first Pareto front.
+        """
+        if len(self.config.objectives) == 1:
+            return max(self.population, key=lambda ind: ind.fitness.get("annualized_return", -100))
+        else:
+            # Multi-objective: return random from first Pareto front
+            fronts = fast_non_dominated_sort(self.population, self.config.objectives)
+            if fronts and fronts[0]:
+                return random.choice(fronts[0])
+            return self.population[0]
+
+    def _is_multi_objective(self) -> bool:
+        """Returns True if using multi-objective optimization."""
+        return len(self.config.objectives) > 1
+
+    def _select_parent(self) -> Individual:
+        """Selects a parent for mutation.
+
+        Single objective: uniform random selection from population.
+        Multi-objective: binary tournament using Pareto rank and crowding distance.
+        """
+        if not self._is_multi_objective():
+            return random.choice(self.population)
+
+        # Multi-objective: binary tournament selection
+        return self._tournament_select()
+
+    def _tournament_select(self, tournament_size: int = 2) -> Individual:
+        """Binary tournament selection using NSGA-II criteria.
+
+        Compares individuals by:
+        1. Pareto rank (lower is better)
+        2. Crowding distance (higher is better, for diversity)
+        """
+        # Ensure ranks and crowding distances are computed
+        fronts = fast_non_dominated_sort(self.population, self.config.objectives)
+        for front in fronts:
+            crowding_distance_assignment(front, self.config.objectives)
+
+        # Select tournament_size random individuals
+        candidates = random.sample(self.population, min(tournament_size, len(self.population)))
+
+        # Compare and return the best
+        def is_better(ind1: Individual, ind2: Individual) -> bool:
+            """Returns True if ind1 is better than ind2 by NSGA-II criteria."""
+            if ind1.rank != ind2.rank:
+                return ind1.rank < ind2.rank
+            return ind1.crowding_distance > ind2.crowding_distance
+
+        best = candidates[0]
+        for candidate in candidates[1:]:
+            if is_better(candidate, best):
+                best = candidate
+        return best
+
+    def _should_accept(self, candidate: Individual, parent: Individual) -> bool:
+        """Determines if a candidate should be accepted into the population.
+
+        Single objective: accept if fitness >= MAS (Minimum Acceptable Score).
+        Multi-objective: accept if candidate is non-dominated by any existing individual,
+                        or if it dominates the parent.
+        """
+        if not self._is_multi_objective():
+            return candidate.fitness["annualized_return"] >= self.mas
+
+        # Multi-objective acceptance criteria:
+        # Accept if the candidate is not dominated by everyone in the population
+        # (i.e., it would be in some Pareto front, not completely dominated)
+        dominated_by_all = all(
+            dominates(ind, candidate, self.config.objectives)
+            for ind in self.population
+        )
+        return not dominated_by_all
 
     def _evaluate_final_test(self) -> List[Dict[str, Any]]:
         """Evaluates all individuals in the final population on the test set."""
@@ -190,14 +265,20 @@ class Optimizer:
         self.population = [seed_ind]
         
         # 4. Evolutionary Loop
+        multi_obj_mode = self._is_multi_objective()
+        if multi_obj_mode:
+            print(f"Multi-objective mode: optimizing {self.config.objectives}")
+
         for gen in range(self.config.ga.generations):
             print(f"\n--- Generation {gen+1}/{self.config.ga.generations} ---")
-            
+
             # Select Parent (St)
-            # Paper suggests various methods (roulette, etc.). Simple uniform or best for now.
-            # "Since the population only contains strategies > MAS, various selection methods... including uniform."
-            parent = random.choice(self.population)
-            print("Selected parent with fitness: {:.2f}%".format(parent.fitness["annualized_return"]))
+            parent = self._select_parent()
+            if multi_obj_mode:
+                obj_str = ", ".join(f"{obj}={parent.fitness.get(obj, 0):.2f}" for obj in self.config.objectives)
+                print(f"Selected parent: {obj_str}")
+            else:
+                print("Selected parent with fitness: {:.2f}%".format(parent.fitness["annualized_return"]))
             
             # LLM Analysis
             print("Requesting LLM Analysis...")
@@ -218,15 +299,22 @@ class Optimizer:
                     
                     # Backtest on TRAIN
                     metrics = self._evaluate(self.train_backtester, candidate_chrom)
-                    fitness = metrics["annualized_return"]
-                    
-                    print(f"  Candidate Fitness: {fitness:.2f}% (MAS: {self.mas:.2f}%)")
-                    
-                    if fitness >= self.mas:
-                        new_ind = Individual(chromosome=candidate_chrom, fitness=metrics)
+                    candidate_ind = Individual(chromosome=candidate_chrom, fitness=metrics)
+
+                    if multi_obj_mode:
+                        obj_str = ", ".join(f"{obj}={metrics.get(obj, 0):.2f}" for obj in self.config.objectives)
+                        print(f"  Candidate: {obj_str}")
+                    else:
+                        print(f"  Candidate Fitness: {metrics['annualized_return']:.2f}% (MAS: {self.mas:.2f}%)")
+
+                    if self._should_accept(candidate_ind, parent):
+                        new_ind = candidate_ind
                         print("  >>> Strategy Accepted!")
                     else:
-                        print("  >>> Strategy Rejected (Fitness < MAS).")
+                        if multi_obj_mode:
+                            print("  >>> Strategy Rejected (dominated by population).")
+                        else:
+                            print("  >>> Strategy Rejected (Fitness < MAS).")
                     
                     # Break loop if compiled and ran successfully (even if rejected)
                     # Wait, paper says: "If the LLM produces non-functional code... repair loop continues."
