@@ -8,6 +8,7 @@ from .optimizer import Optimizer
 from .results import Results
 from .metrics import register_objective
 from .llm.client import register_client
+from .batch import BatchRunner, BatchResults
 
 __all__ = [
     "Config",
@@ -16,4 +17,6 @@ __all__ = [
     "Results",
     "register_objective",
     "register_client",
+    "BatchRunner",
+    "BatchResults",
 ]

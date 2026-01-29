@@ -8,7 +8,7 @@ ga:
 objectives:
   - "annualized_return"
   # Multi-objective example (uncomment to use NSGA-II):
-  # - "sharpe_ratio"
+  - "sharpe_ratio"
 #llm:
 #  client: "ollama" # Use "openai" for OpenAI API, "ollama" for local LLM
 #  model: "qwen2.5-coder:14b"
