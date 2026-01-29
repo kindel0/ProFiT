@@ -4,7 +4,7 @@ Configuration models for the ProFiT framework.
 This module defines the Pydantic models for validating and managing the
 framework's configuration, which is typically loaded from a YAML file.
 """
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -39,11 +39,13 @@ class LLMConfig(BaseModel):
     Configuration for the Large Language Model client.
 
     Args:
-        client (str): The identifier for the LLM client to use (e.g., 'openai').
-        model (str): The specific model name to be used (e.g., 'gpt-4-turbo').
+        client (str): The identifier for the LLM client to use (e.g., 'openai', 'ollama').
+        model (str): The specific model name to be used (e.g., 'gpt-4-turbo', 'qwen2.5-coder:14b').
+        base_url (Optional[str]): Custom API endpoint URL (e.g., for Ollama on a different host).
     """
     client: str = Field(..., description="Identifier for the LLM client.")
     model: str = Field(..., description="The specific LLM model to use.")
+    base_url: Optional[str] = Field(None, description="Custom API endpoint URL.")
 
 
 class Config(BaseModel):

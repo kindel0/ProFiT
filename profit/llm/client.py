@@ -232,5 +232,186 @@ Requirements:
         return self._clean_code_response(response.choices[0].message.content)
 
 
+class OllamaClient(LLMClient):
+    """
+    Implementation of LLM client using Ollama's OpenAI-compatible API.
+    """
+
+    # Reuse the same prompts as OpenAIClient
+    _ANALYSIS_SYSTEM = OpenAIClient._ANALYSIS_SYSTEM
+    _ANALYSIS_USER = OpenAIClient._ANALYSIS_USER
+    _IMPROVEMENT_SYSTEM = OpenAIClient._IMPROVEMENT_SYSTEM
+    _IMPROVEMENT_USER = OpenAIClient._IMPROVEMENT_USER
+    _REPAIR_SYSTEM = OpenAIClient._REPAIR_SYSTEM
+    _REPAIR_USER = OpenAIClient._REPAIR_USER
+
+    def __init__(self, model: str = "qwen2.5-coder:14b", base_url: str = None):
+        self.model = model
+        self.base_url = base_url or "http://localhost:11434/v1"
+        # Ollama doesn't require an API key, but the OpenAI client needs one
+        self.client = OpenAI(base_url=self.base_url, api_key="ollama")
+
+    def _clean_code_response(self, response_content: str) -> str:
+        """Helper to strip markdown code blocks if present."""
+        content = response_content.strip()
+        if content.startswith("```python"):
+            content = content[len("```python"):]
+        elif content.startswith("```"):
+            content = content[len("```"):]
+
+        if content.endswith("```"):
+            content = content[:-3]
+
+        return content.strip()
+
+    def analyze_strategy(
+        self,
+        chromosome: Chromosome,
+        performance_metrics: Dict[str, Any],
+    ) -> str:
+        metrics_str = ", ".join([f"{k}: {v}" for k, v in performance_metrics.items()])
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self._ANALYSIS_SYSTEM},
+                {"role": "user", "content": self._ANALYSIS_USER.format(
+                    backtest_results=metrics_str,
+                    strategy_code=chromosome.code
+                )},
+            ],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
+
+    def improve_strategy(
+        self,
+        chromosome: Chromosome,
+        analysis: str,
+    ) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self._IMPROVEMENT_SYSTEM},
+                {"role": "user", "content": self._IMPROVEMENT_USER.format(
+                    improvement_proposals=analysis,
+                    strategy_code=chromosome.code
+                )},
+            ],
+            temperature=0.2,
+        )
+        return self._clean_code_response(response.choices[0].message.content)
+
+    def repair_strategy(
+        self,
+        code: str,
+        error_traceback: str,
+    ) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self._REPAIR_SYSTEM},
+                {"role": "user", "content": self._REPAIR_USER.format(
+                    traceback=error_traceback,
+                    strategy_code=code
+                )},
+            ],
+            temperature=0.2,
+        )
+        return self._clean_code_response(response.choices[0].message.content)
+
+
+class DeepSeekClient(LLMClient):
+    """
+    Implementation of LLM client using DeepSeek's OpenAI-compatible API.
+    """
+
+    # Reuse the same prompts as OpenAIClient
+    _ANALYSIS_SYSTEM = OpenAIClient._ANALYSIS_SYSTEM
+    _ANALYSIS_USER = OpenAIClient._ANALYSIS_USER
+    _IMPROVEMENT_SYSTEM = OpenAIClient._IMPROVEMENT_SYSTEM
+    _IMPROVEMENT_USER = OpenAIClient._IMPROVEMENT_USER
+    _REPAIR_SYSTEM = OpenAIClient._REPAIR_SYSTEM
+    _REPAIR_USER = OpenAIClient._REPAIR_USER
+
+    def __init__(self, model: str = "deepseek-coder", base_url: str = None):
+        self.env_name = "DEEPSEEK_API_KEY"
+        self.api_key = os.environ.get(self.env_name)
+        self.model = model
+        self.base_url = base_url or "https://api.deepseek.com"
+        self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+
+    def _clean_code_response(self, response_content: str) -> str:
+        """Helper to strip markdown code blocks if present."""
+        content = response_content.strip()
+        if content.startswith("```python"):
+            content = content[len("```python"):]
+        elif content.startswith("```"):
+            content = content[len("```"):]
+
+        if content.endswith("```"):
+            content = content[:-3]
+
+        return content.strip()
+
+    def analyze_strategy(
+        self,
+        chromosome: Chromosome,
+        performance_metrics: Dict[str, Any],
+    ) -> str:
+        metrics_str = ", ".join([f"{k}: {v}" for k, v in performance_metrics.items()])
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self._ANALYSIS_SYSTEM},
+                {"role": "user", "content": self._ANALYSIS_USER.format(
+                    backtest_results=metrics_str,
+                    strategy_code=chromosome.code
+                )},
+            ],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
+
+    def improve_strategy(
+        self,
+        chromosome: Chromosome,
+        analysis: str,
+    ) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self._IMPROVEMENT_SYSTEM},
+                {"role": "user", "content": self._IMPROVEMENT_USER.format(
+                    improvement_proposals=analysis,
+                    strategy_code=chromosome.code
+                )},
+            ],
+            temperature=0.2,
+        )
+        return self._clean_code_response(response.choices[0].message.content)
+
+    def repair_strategy(
+        self,
+        code: str,
+        error_traceback: str,
+    ) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self._REPAIR_SYSTEM},
+                {"role": "user", "content": self._REPAIR_USER.format(
+                    traceback=error_traceback,
+                    strategy_code=code
+                )},
+            ],
+            temperature=0.2,
+        )
+        return self._clean_code_response(response.choices[0].message.content)
+
+
 register_client("mock", MockLLMClient)
 register_client("openai", OpenAIClient)
+register_client("ollama", OllamaClient)
+register_client("deepseek", DeepSeekClient)
