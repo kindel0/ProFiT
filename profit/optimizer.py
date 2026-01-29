@@ -90,7 +90,8 @@ class Optimizer:
 
         self.population: List[Individual] = []
         self.history: List[Dict[str, Any]] = []
-        self.mas: float = -100.0 # Minimum Acceptable Score
+        self.validation_history: List[Dict[str, Any]] = []
+        self.mas: float = -100.0  # Minimum Acceptable Score
 
     def _slice_data(self, data: pd.DataFrame, fold_idx: int) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Slices the data into Train, Val, Test based on fold definition."""
@@ -109,6 +110,56 @@ class Optimizer:
         """Runs backtest and returns metrics."""
         result = backtester.run(chromosome)
         return result.metrics
+
+    def _evaluate_on_validation(self, individual: Individual) -> Dict[str, float]:
+        """Evaluates an individual on the validation set."""
+        return self._evaluate(self.val_backtester, individual.chromosome)
+
+    def _evaluate_on_test(self, individual: Individual) -> Dict[str, float]:
+        """Evaluates an individual on the test set."""
+        return self._evaluate(self.test_backtester, individual.chromosome)
+
+    def _get_best_individual(self) -> Individual:
+        """Returns the best individual in the population by training fitness."""
+        return max(self.population, key=lambda ind: ind.fitness.get("annualized_return", -100))
+
+    def _evaluate_final_test(self) -> List[Dict[str, Any]]:
+        """Evaluates all individuals in the final population on the test set."""
+        test_results = []
+
+        # Sort population by training fitness (best first)
+        sorted_pop = sorted(
+            self.population,
+            key=lambda ind: ind.fitness.get("annualized_return", -100),
+            reverse=True
+        )
+
+        for i, ind in enumerate(sorted_pop):
+            try:
+                test_metrics = self._evaluate_on_test(ind)
+                result = {
+                    "rank": i + 1,
+                    "train_fitness": ind.fitness["annualized_return"],
+                    "train_sharpe": ind.fitness["sharpe_ratio"],
+                    "test_fitness": test_metrics["annualized_return"],
+                    "test_sharpe": test_metrics["sharpe_ratio"],
+                    "test_expectancy": test_metrics.get("expectancy", 0.0)
+                }
+                test_results.append(result)
+                print(f"  Strategy {i+1}: Train={ind.fitness['annualized_return']:.2f}%, Test={test_metrics['annualized_return']:.2f}%")
+            except Exception as e:
+                print(f"  Strategy {i+1}: Test evaluation failed - {e}")
+                test_results.append({
+                    "rank": i + 1,
+                    "train_fitness": ind.fitness["annualized_return"],
+                    "train_sharpe": ind.fitness["sharpe_ratio"],
+                    "test_fitness": None,
+                    "test_sharpe": None,
+                    "test_expectancy": None,
+                    "error": str(e)
+                })
+
+        return test_results
 
     def run(self) -> Results:
         """
@@ -192,13 +243,37 @@ class Optimizer:
             # Add to population if valid and good
             if new_ind:
                 self.population.append(new_ind)
-                
-                # Record History
+
+                # Record History (training metrics)
                 self.history.append({
                     "generation": gen,
-                    "fitness": new_ind.fitness["annualized_return"],
-                    "sharpe": new_ind.fitness["sharpe_ratio"],
+                    "train_fitness": new_ind.fitness["annualized_return"],
+                    "train_sharpe": new_ind.fitness["sharpe_ratio"],
                     "parent_fitness": parent.fitness["annualized_return"]
                 })
 
-        return Results(final_population=self.population, history=self.history)
+            # Track validation metrics for the best strategy (for overfitting monitoring)
+            best_ind = self._get_best_individual()
+            try:
+                val_metrics = self._evaluate_on_validation(best_ind)
+                self.validation_history.append({
+                    "generation": gen,
+                    "train_fitness": best_ind.fitness["annualized_return"],
+                    "train_sharpe": best_ind.fitness["sharpe_ratio"],
+                    "val_fitness": val_metrics["annualized_return"],
+                    "val_sharpe": val_metrics["sharpe_ratio"]
+                })
+                print(f"  Validation: {val_metrics['annualized_return']:.2f}% (Train: {best_ind.fitness['annualized_return']:.2f}%)")
+            except Exception as e:
+                print(f"  Validation evaluation failed: {e}")
+
+        # Final test set evaluation
+        print("\n--- Final Test Set Evaluation ---")
+        test_results = self._evaluate_final_test()
+
+        return Results(
+            final_population=self.population,
+            history=self.history,
+            validation_history=self.validation_history,
+            test_results=test_results
+        )
