@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from profit.config import Config
 from profit.optimizer import Optimizer
 from profit.results import Results
+from profit.analysis import StatisticalSummary, compute_confidence_interval
 
 
 @dataclass
@@ -60,7 +61,7 @@ class BatchResults:
         train_sharpe = [r["train_sharpe"] for r in best_per_run if r["train_sharpe"] is not None]
         test_sharpe = [r["test_sharpe"] for r in best_per_run if r["test_sharpe"] is not None]
 
-        return {
+        result = {
             "num_runs": len(self.run_results),
             "successful_runs": len(self.successful_runs),
             "failed_runs": len(self.failed_runs),
@@ -73,6 +74,57 @@ class BatchResults:
             "test_sharpe_mean": float(np.mean(test_sharpe)) if test_sharpe else None,
             "test_sharpe_std": float(np.std(test_sharpe)) if test_sharpe else None,
         }
+
+        # Add 95% confidence intervals
+        if test_fitness:
+            mean, ci_lower, ci_upper = compute_confidence_interval(test_fitness)
+            result["test_fitness_ci_lower"] = ci_lower
+            result["test_fitness_ci_upper"] = ci_upper
+
+        if test_sharpe:
+            mean, ci_lower, ci_upper = compute_confidence_interval(test_sharpe)
+            result["test_sharpe_ci_lower"] = ci_lower
+            result["test_sharpe_ci_upper"] = ci_upper
+
+        return result
+
+    def statistical_summary(self) -> Dict[str, Any]:
+        """
+        Generates detailed statistical summary with confidence intervals
+        and significance tests comparing train vs test performance.
+        """
+        best_per_run = self.get_best_test_fitness_per_run()
+        if not best_per_run:
+            return {}
+
+        train_fitness = [r["train_fitness"] for r in best_per_run if r["train_fitness"] is not None]
+        test_fitness = [r["test_fitness"] for r in best_per_run if r["test_fitness"] is not None]
+        train_sharpe = [r["train_sharpe"] for r in best_per_run if r["train_sharpe"] is not None]
+        test_sharpe = [r["test_sharpe"] for r in best_per_run if r["test_sharpe"] is not None]
+
+        summaries = {}
+
+        # Test fitness analysis
+        if test_fitness:
+            fitness_summary = StatisticalSummary(
+                treatment_values=test_fitness,
+                baseline_values=train_fitness if len(train_fitness) == len(test_fitness) else None,
+                metric_name="Annualized Return (%)"
+            )
+            summaries["fitness"] = fitness_summary.compute()
+            summaries["fitness_text"] = fitness_summary.format_summary()
+
+        # Test Sharpe analysis
+        if test_sharpe:
+            sharpe_summary = StatisticalSummary(
+                treatment_values=test_sharpe,
+                baseline_values=train_sharpe if len(train_sharpe) == len(test_sharpe) else None,
+                metric_name="Sharpe Ratio"
+            )
+            summaries["sharpe"] = sharpe_summary.compute()
+            summaries["sharpe_text"] = sharpe_summary.format_summary()
+
+        return summaries
 
     def generate_batch_report(self, output_dir: str):
         """Generates a comprehensive report for all batch runs."""
@@ -95,27 +147,52 @@ class BatchResults:
                 f.write(f"Train Fitness: {agg['train_fitness_mean']:.2f}% +/- {agg['train_fitness_std']:.2f}%\n")
             if agg.get('test_fitness_mean') is not None:
                 f.write(f"Test Fitness:  {agg['test_fitness_mean']:.2f}% +/- {agg['test_fitness_std']:.2f}%\n")
+                if agg.get('test_fitness_ci_lower') is not None:
+                    f.write(f"  95% CI:      [{agg['test_fitness_ci_lower']:.2f}%, {agg['test_fitness_ci_upper']:.2f}%]\n")
             if agg.get('train_sharpe_mean') is not None:
                 f.write(f"Train Sharpe:  {agg['train_sharpe_mean']:.2f} +/- {agg['train_sharpe_std']:.2f}\n")
             if agg.get('test_sharpe_mean') is not None:
                 f.write(f"Test Sharpe:   {agg['test_sharpe_mean']:.2f} +/- {agg['test_sharpe_std']:.2f}\n")
+                if agg.get('test_sharpe_ci_lower') is not None:
+                    f.write(f"  95% CI:      [{agg['test_sharpe_ci_lower']:.2f}, {agg['test_sharpe_ci_upper']:.2f}]\n")
 
             if self.failed_runs:
                 f.write("\n=== Failed Runs ===\n\n")
                 for run in self.failed_runs:
                     f.write(f"Fold {run.fold_idx}, Seed {run.seed_idx}: {run.error}\n")
 
-        # 2. Per-run results CSV
+        # 2. Detailed statistical analysis
+        stats = self.statistical_summary()
+        if stats:
+            stats_path = os.path.join(output_dir, "statistical_analysis.txt")
+            with open(stats_path, 'w') as f:
+                f.write("=== Statistical Analysis ===\n\n")
+                f.write("This analysis compares Test performance (out-of-sample)\n")
+                f.write("against Train performance (in-sample) to assess generalization.\n\n")
+
+                if "fitness_text" in stats:
+                    f.write(stats["fitness_text"])
+                    f.write("\n\n")
+
+                if "sharpe_text" in stats:
+                    f.write(stats["sharpe_text"])
+                    f.write("\n")
+
+        # 3. Per-run results CSV
         best_per_run = self.get_best_test_fitness_per_run()
         if best_per_run:
             df = pd.DataFrame(best_per_run)
             df.to_csv(os.path.join(output_dir, "per_run_results.csv"), index=False)
 
-        # 3. Train vs Test comparison plot
+        # 4. Train vs Test comparison plot
         if best_per_run:
             self._plot_train_vs_test(output_dir, best_per_run)
 
-        # 4. Generate individual run reports
+        # 5. Confidence interval plot
+        if best_per_run and len(best_per_run) >= 2:
+            self._plot_confidence_intervals(output_dir)
+
+        # 6. Generate individual run reports
         runs_dir = os.path.join(output_dir, "runs")
         os.makedirs(runs_dir, exist_ok=True)
         for run in self.successful_runs:
@@ -154,6 +231,84 @@ class BatchResults:
 
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, "train_vs_test_comparison.png"))
+        plt.close(fig)
+
+    def _plot_confidence_intervals(self, output_dir: str):
+        """Plots confidence intervals for key metrics."""
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        best_per_run = self.get_best_test_fitness_per_run()
+        if not best_per_run or len(best_per_run) < 2:
+            return
+
+        train_fitness = [r["train_fitness"] for r in best_per_run if r["train_fitness"] is not None]
+        test_fitness = [r["test_fitness"] for r in best_per_run if r["test_fitness"] is not None]
+        train_sharpe = [r["train_sharpe"] for r in best_per_run if r["train_sharpe"] is not None]
+        test_sharpe = [r["test_sharpe"] for r in best_per_run if r["test_sharpe"] is not None]
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Plot 1: Fitness (Annualized Return)
+        ax1 = axes[0]
+        metrics = []
+        means = []
+        ci_errors = []
+
+        if train_fitness:
+            mean, ci_low, ci_high = compute_confidence_interval(train_fitness)
+            metrics.append("Train")
+            means.append(mean)
+            ci_errors.append([mean - ci_low, ci_high - mean])
+
+        if test_fitness:
+            mean, ci_low, ci_high = compute_confidence_interval(test_fitness)
+            metrics.append("Test")
+            means.append(mean)
+            ci_errors.append([mean - ci_low, ci_high - mean])
+
+        if means:
+            x = np.arange(len(metrics))
+            ci_errors = np.array(ci_errors).T
+            ax1.bar(x, means, yerr=ci_errors, capsize=5, alpha=0.7, color=['steelblue', 'darkorange'][:len(metrics)])
+            ax1.set_xticks(x)
+            ax1.set_xticklabels(metrics)
+            ax1.set_ylabel("Annualized Return (%)")
+            ax1.set_title("Fitness with 95% CI")
+            ax1.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+            ax1.grid(True, axis='y', alpha=0.3)
+
+        # Plot 2: Sharpe Ratio
+        ax2 = axes[1]
+        metrics = []
+        means = []
+        ci_errors = []
+
+        if train_sharpe:
+            mean, ci_low, ci_high = compute_confidence_interval(train_sharpe)
+            metrics.append("Train")
+            means.append(mean)
+            ci_errors.append([mean - ci_low, ci_high - mean])
+
+        if test_sharpe:
+            mean, ci_low, ci_high = compute_confidence_interval(test_sharpe)
+            metrics.append("Test")
+            means.append(mean)
+            ci_errors.append([mean - ci_low, ci_high - mean])
+
+        if means:
+            x = np.arange(len(metrics))
+            ci_errors = np.array(ci_errors).T
+            ax2.bar(x, means, yerr=ci_errors, capsize=5, alpha=0.7, color=['steelblue', 'darkorange'][:len(metrics)])
+            ax2.set_xticks(x)
+            ax2.set_xticklabels(metrics)
+            ax2.set_ylabel("Sharpe Ratio")
+            ax2.set_title("Sharpe Ratio with 95% CI")
+            ax2.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+            ax2.grid(True, axis='y', alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, "confidence_intervals.png"))
         plt.close(fig)
 
 
