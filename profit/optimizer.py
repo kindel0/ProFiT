@@ -332,6 +332,16 @@ class Optimizer:
             if new_ind:
                 self.population.append(new_ind)
 
+                # Trim population if it exceeds max size (using NSGA-II selection)
+                max_pop_size = self.config.ga.population_size
+                if len(self.population) > max_pop_size:
+                    self.population = select_nsga2(
+                        self.population,
+                        max_pop_size,
+                        self.config.objectives
+                    )
+                    print(f"  Population trimmed to {max_pop_size} (NSGA-II selection)")
+
                 # Record History (training metrics)
                 self.history.append({
                     "generation": gen,
