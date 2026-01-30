@@ -78,12 +78,24 @@ class Optimizer:
         
         # Slice Data for this Fold
         self.train_data, self.val_data, self.test_data = self._slice_data(self.full_data, fold_idx)
-        
-        # Initialize backtesters (one for each split if needed, but mainly Train for evolution)
+
+        # Get fold date boundaries for warm-up periods
+        fold = FOLDS[fold_idx]
+        val_start = fold["val"][0]
+        test_start = fold["test"][0]
+
+        # Initialize backtesters with warm-up data for proper indicator initialization
+        # Training: just train data (indicators warm up during training)
         self.train_backtester = LucitBacktester(data=self.train_data)
-        self.val_backtester = LucitBacktester(data=self.val_data)
-        # Test backtester is used only at end
-        self.test_backtester = LucitBacktester(data=self.test_data)
+
+        # Validation: train + val data, but only measure performance from val_start
+        # This allows indicators with long lookbacks to properly initialize
+        train_val_data = pd.concat([self.train_data, self.val_data])
+        self.val_backtester = LucitBacktester(data=train_val_data, eval_start=val_start)
+
+        # Test: train + val + test data, but only measure performance from test_start
+        train_val_test_data = pd.concat([self.train_data, self.val_data, self.test_data])
+        self.test_backtester = LucitBacktester(data=train_val_test_data, eval_start=test_start)
         
         # Initialize LLM Client
         client_name = config.llm.client if config.llm.client else "openai"
