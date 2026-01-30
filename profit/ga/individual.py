@@ -1,7 +1,7 @@
 """
 Data structure for representing an individual in the population.
 """
-from typing import Dict
+from typing import Dict, Optional
 
 from profit.strategy import Chromosome
 from pydantic import BaseModel, Field
@@ -16,10 +16,12 @@ class Individual(BaseModel):
         chromosome (Chromosome): The chromosome defining the strategy.
         fitness (Dict[str, float]): A dictionary of fitness scores, where keys
             are the names of the objectives.
+        validation_fitness (Dict[str, float]): Optional validation set fitness scores.
     """
     chromosome: Chromosome
     fitness: Dict[str, float] = Field(default_factory=dict)
-    
+    validation_fitness: Optional[Dict[str, float]] = None
+
     # Attributes for NSGA-II
     rank: int = 0
     crowding_distance: float = 0.0

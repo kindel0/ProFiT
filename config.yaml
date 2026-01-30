@@ -1,18 +1,21 @@
 # config.yaml
+
+# Data configuration
 data:
   path: "tests/data/Bitcoin_historical_data_coinmarketcap.csv"
   asset: "BTC-USD"
+
+# Genetic Algorithm parameters
 ga:
-  population_size: 10 # Not used in steady-state ProFiT, but kept for config compatibility
-  generations: 3 # Number of mutation steps
+  population_size: 10    # Max population size (trimmed via NSGA-II)
+  generations: 10        # Number of evolutionary steps
+
+# Optimization objectives
 objectives:
   - "annualized_return"
-  # Multi-objective example (uncomment to use NSGA-II):
   - "sharpe_ratio"
-#llm:
-#  client: "ollama" # Use "openai" for OpenAI API, "ollama" for local LLM
-#  model: "qwen2.5-coder:14b"
 
+# LLM configuration
 llm:
-  client: "deepseek" # Use "openai" for OpenAI API, "ollama" for local LLM
-  model: "deepseek-coder"  # or "deepseek-chat", "deepseek-reasoner"
+  client: "deepseek"       # Options: "openai", "deepseek", "ollama", "mock"
+  model: "deepseek-coder"  # Model name for the chosen client

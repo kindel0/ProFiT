@@ -198,6 +198,57 @@ class Optimizer:
         )
         return not dominated_by_all
 
+    def _should_accept_with_validation(
+        self, candidate: Individual, parent: Individual, max_overfit_ratio: float = 3.0
+    ) -> Tuple[bool, Optional[Dict[str, float]], str]:
+        """Determines if a candidate should be accepted, considering validation performance.
+
+        This prevents severe overfitting by rejecting strategies where:
+        1. Training return is positive but validation return is very negative
+        2. The gap between train and validation exceeds max_overfit_ratio
+
+        Args:
+            candidate: The candidate individual to evaluate
+            parent: The parent individual (for reference)
+            max_overfit_ratio: Maximum allowed ratio of |train - val| / |train|
+
+        Returns:
+            Tuple of (should_accept, validation_metrics, rejection_reason)
+        """
+        # First check basic acceptance criteria
+        basic_accept = self._should_accept(candidate, parent)
+        if not basic_accept:
+            return False, None, "dominated" if self._is_multi_objective() else "below_mas"
+
+        # Evaluate on validation set
+        try:
+            val_metrics = self._evaluate_on_validation(candidate)
+        except Exception as e:
+            # If validation fails, reject the strategy
+            return False, None, f"validation_error: {e}"
+
+        train_return = candidate.fitness.get("annualized_return", 0)
+        val_return = val_metrics.get("annualized_return", 0)
+
+        # Check for severe overfitting patterns
+        # Pattern 1: Positive train, significantly negative validation
+        if train_return > 5 and val_return < -20:
+            return False, val_metrics, "overfit_positive_train_negative_val"
+
+        # Pattern 2: Large train-validation gap relative to train magnitude
+        if abs(train_return) > 1:  # Avoid division issues with near-zero returns
+            gap_ratio = abs(train_return - val_return) / abs(train_return)
+            if gap_ratio > max_overfit_ratio and val_return < 0:
+                return False, val_metrics, f"overfit_gap_ratio_{gap_ratio:.1f}"
+
+        # Pattern 3: Strategy doesn't trade (0% return on both)
+        # This is acceptable but we track it
+        if train_return == 0 and val_return == 0:
+            # Accept but note it's a non-trading strategy
+            pass
+
+        return True, val_metrics, "accepted"
+
     def _evaluate_final_test(self) -> List[Dict[str, Any]]:
         """Evaluates all individuals in the final population on the test set."""
         test_results = []
@@ -212,22 +263,36 @@ class Optimizer:
         for i, ind in enumerate(sorted_pop):
             try:
                 test_metrics = self._evaluate_on_test(ind)
+
+                # Get validation metrics (cached or evaluate)
+                val_fitness = None
+                val_sharpe = None
+                if ind.validation_fitness:
+                    val_fitness = ind.validation_fitness.get("annualized_return")
+                    val_sharpe = ind.validation_fitness.get("sharpe_ratio")
+
                 result = {
                     "rank": i + 1,
                     "train_fitness": ind.fitness["annualized_return"],
                     "train_sharpe": ind.fitness["sharpe_ratio"],
+                    "val_fitness": val_fitness,
+                    "val_sharpe": val_sharpe,
                     "test_fitness": test_metrics["annualized_return"],
                     "test_sharpe": test_metrics["sharpe_ratio"],
                     "test_expectancy": test_metrics.get("expectancy", 0.0)
                 }
                 test_results.append(result)
-                print(f"  Strategy {i+1}: Train={ind.fitness['annualized_return']:.2f}%, Test={test_metrics['annualized_return']:.2f}%")
+
+                val_str = f"{val_fitness:.2f}%" if val_fitness is not None else "N/A"
+                print(f"  Strategy {i+1}: Train={ind.fitness['annualized_return']:.2f}%, Val={val_str}, Test={test_metrics['annualized_return']:.2f}%")
             except Exception as e:
                 print(f"  Strategy {i+1}: Test evaluation failed - {e}")
                 test_results.append({
                     "rank": i + 1,
                     "train_fitness": ind.fitness["annualized_return"],
                     "train_sharpe": ind.fitness["sharpe_ratio"],
+                    "val_fitness": None,
+                    "val_sharpe": None,
                     "test_fitness": None,
                     "test_sharpe": None,
                     "test_expectancy": None,
@@ -307,11 +372,25 @@ class Optimizer:
                     else:
                         print(f"  Candidate Fitness: {metrics['annualized_return']:.2f}% (MAS: {self.mas:.2f}%)")
 
-                    if self._should_accept(candidate_ind, parent):
+                    # Use validation-aware acceptance to prevent overfitting
+                    accepted, val_metrics, reason = self._should_accept_with_validation(
+                        candidate_ind, parent
+                    )
+
+                    if accepted:
                         new_ind = candidate_ind
+                        # Store validation metrics with the individual for tracking
+                        if val_metrics:
+                            new_ind.validation_fitness = val_metrics
                         print("  >>> Strategy Accepted!")
+                        if val_metrics:
+                            print(f"      Validation: {val_metrics['annualized_return']:.2f}%")
                     else:
-                        if multi_obj_mode:
+                        if reason.startswith("overfit"):
+                            val_ret = val_metrics["annualized_return"] if val_metrics else "N/A"
+                            print(f"  >>> Strategy Rejected (overfitting detected)")
+                            print(f"      Train: {metrics['annualized_return']:.2f}%, Val: {val_ret}%")
+                        elif multi_obj_mode:
                             print("  >>> Strategy Rejected (dominated by population).")
                         else:
                             print("  >>> Strategy Rejected (Fitness < MAS).")
@@ -352,8 +431,17 @@ class Optimizer:
 
             # Track validation metrics for the best strategy (for overfitting monitoring)
             best_ind = self._get_best_individual()
-            try:
-                val_metrics = self._evaluate_on_validation(best_ind)
+            # Use cached validation if available, otherwise evaluate
+            if best_ind.validation_fitness:
+                val_metrics = best_ind.validation_fitness
+            else:
+                try:
+                    val_metrics = self._evaluate_on_validation(best_ind)
+                except Exception as e:
+                    print(f"  Validation evaluation failed: {e}")
+                    val_metrics = None
+
+            if val_metrics:
                 self.validation_history.append({
                     "generation": gen,
                     "train_fitness": best_ind.fitness["annualized_return"],
@@ -361,9 +449,7 @@ class Optimizer:
                     "val_fitness": val_metrics["annualized_return"],
                     "val_sharpe": val_metrics["sharpe_ratio"]
                 })
-                print(f"  Validation: {val_metrics['annualized_return']:.2f}% (Train: {best_ind.fitness['annualized_return']:.2f}%)")
-            except Exception as e:
-                print(f"  Validation evaluation failed: {e}")
+                print(f"  Best: Train={best_ind.fitness['annualized_return']:.2f}%, Val={val_metrics['annualized_return']:.2f}%")
 
         # Final test set evaluation
         print("\n--- Final Test Set Evaluation ---")

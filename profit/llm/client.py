@@ -129,6 +129,40 @@ Requirements:
     - Retain the existing structure unless a change is explicitly needed for the improvements.
     - Include all tunable hyperparameters as class variables with sensible defaults.
 
+CRITICAL backtesting.py constraints - VIOLATIONS CAUSE RUNTIME ERRORS:
+
+1. NO COMPLEX LAMBDAS: The self.I() method cannot handle complex lambda functions.
+   BAD:  self.I(lambda x: pd.Series(x).rolling(20).mean().shift(1), self.data.Close)
+   GOOD: Define a named function OUTSIDE the class, then use self.I(my_func, self.data.Close)
+
+2. INDICATOR RESULTS ARE NUMPY ARRAYS: After calling self.I(), the result is a numpy array.
+   You CANNOT use .shift(), .rolling(), .index, .iloc, .loc, .ewm() on the result.
+   All pandas operations must happen INSIDE the indicator function, before returning.
+
+3. POSITION SIZING: When using self.buy(size=X) or self.sell(size=X):
+   - size must be a float between 0.0 and 1.0 (fraction of equity), OR
+   - size must be an integer >= 1 (number of shares)
+   - NEVER use size=0, negative values, or floats > 1.0
+   - If omitted, defaults to full position (1.0)
+
+4. INDICATOR FUNCTION PATTERN - Always use this structure:
+   ```python
+   def compute_indicator(close, period=14):
+       s = pd.Series(close)  # Convert to pandas inside function
+       result = s.rolling(period).mean()  # Do all pandas ops here
+       return result  # Return series/array
+
+   class MyStrategy(Strategy):
+       period = 14
+       def init(self):
+           self.ind = self.I(compute_indicator, self.data.Close, self.period)
+       def next(self):
+           if self.ind[-1] > threshold:  # Access with [-1] for current value
+               self.buy()
+   ```
+
+5. AVOID NESTED LAMBDAS: Never nest lambda functions or pass lambdas as arguments to other lambdas.
+
 Improvement proposals:
 {improvement_proposals}
 
@@ -139,7 +173,7 @@ Strategy code:
     # Repair Prompt
     _REPAIR_SYSTEM = "You are an expert Python developer debugging a trading strategy."
     _REPAIR_USER = """
-The following trading strategy code failed to compile or run. 
+The following trading strategy code failed to compile or run.
 
 Error Traceback:
 {traceback}
@@ -147,11 +181,36 @@ Error Traceback:
 Strategy Code:
 {strategy_code}
 
-Please fix the error and return the full, valid Python code. 
+Please fix the error and return the full, valid Python code.
+
+COMMON ERROR FIXES:
+
+1. 'Indicator "λ" error' or 'Indicator "λ(..." error':
+   - CAUSE: Complex lambda function in self.I()
+   - FIX: Replace lambda with a named function defined OUTSIDE the class
+   - Example fix:
+     def my_indicator(close, period):
+         return pd.Series(close).rolling(period).mean()
+     # Then use: self.I(my_indicator, self.data.Close, 20)
+
+2. "'_Array' object has no attribute 'shift'" or "'_Array' has no attribute 'rolling'":
+   - CAUSE: Using pandas methods on self.I() result (which is numpy array)
+   - FIX: Move ALL pandas operations INSIDE the indicator function
+
+3. "size must be a positive fraction of equity":
+   - CAUSE: Invalid size parameter in buy()/sell()
+   - FIX: Use size between 0.0-1.0 (fraction) or integer >= 1, or omit size entirely
+
+4. 'Indicator "FunctionName(...)" error':
+   - CAUSE: Function not properly defined or imported
+   - FIX: Ensure function is defined at module level (outside class) and accepts correct arguments
+
 Requirements:
 - Output only valid Python code.
-- Do not include any explanations or markdown formatting (unless code block).
+- Do not include any explanations or markdown formatting.
 - Ensure compatibility with backtesting.py.
+- Define indicator functions OUTSIDE the class.
+- Use pd.Series() conversion INSIDE indicator functions, not in self.I() calls.
 """
 
     def __init__(self, model: str = "gpt-4o"):
