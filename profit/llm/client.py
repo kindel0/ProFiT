@@ -145,7 +145,15 @@ CRITICAL backtesting.py constraints - VIOLATIONS CAUSE RUNTIME ERRORS:
    - NEVER use size=0, negative values, or floats > 1.0
    - If omitted, defaults to full position (1.0)
 
-4. INDICATOR FUNCTION PATTERN - Always use this structure:
+4. POSITION OBJECT API - self.position only has these attributes:
+   - is_long, is_short: bool - check position direction
+   - size: float - current position size
+   - pl, pl_pct: float - profit/loss
+   - close(): method - close the position
+   IMPORTANT: self.position does NOT have entry_price, entry_time, or entry_bar!
+   To track entry price, store it yourself: self.entry_price = self.data.Close[-1] after buy/sell.
+
+5. INDICATOR FUNCTION PATTERN - Always use this structure:
    ```python
    def compute_indicator(close, period=14):
        s = pd.Series(close)  # Convert to pandas inside function
@@ -156,12 +164,14 @@ CRITICAL backtesting.py constraints - VIOLATIONS CAUSE RUNTIME ERRORS:
        period = 14
        def init(self):
            self.ind = self.I(compute_indicator, self.data.Close, self.period)
+           self.entry_price = 0  # Track entry price manually
        def next(self):
-           if self.ind[-1] > threshold:  # Access with [-1] for current value
+           if self.ind[-1] > threshold:
                self.buy()
+               self.entry_price = self.data.Close[-1]  # Store entry price
    ```
 
-5. AVOID NESTED LAMBDAS: Never nest lambda functions or pass lambdas as arguments to other lambdas.
+6. AVOID NESTED LAMBDAS: Never nest lambda functions or pass lambdas as arguments to other lambdas.
 
 Improvement proposals:
 {improvement_proposals}
@@ -193,15 +203,22 @@ COMMON ERROR FIXES:
          return pd.Series(close).rolling(period).mean()
      # Then use: self.I(my_indicator, self.data.Close, 20)
 
-2. "'_Array' object has no attribute 'shift'" or "'_Array' has no attribute 'rolling'":
+2. "'Position' object has no attribute 'entry_price'" (or entry_time, entry_bar):
+   - CAUSE: self.position does NOT have entry_price attribute
+   - FIX: Track entry price manually using an instance variable
+   - In init(): self.entry_price = 0
+   - After buy()/sell(): self.entry_price = self.data.Close[-1]
+   - Replace self.position.entry_price with self.entry_price
+
+3. "'_Array' object has no attribute 'shift'" or "'_Array' has no attribute 'rolling'":
    - CAUSE: Using pandas methods on self.I() result (which is numpy array)
    - FIX: Move ALL pandas operations INSIDE the indicator function
 
-3. "size must be a positive fraction of equity":
+4. "size must be a positive fraction of equity":
    - CAUSE: Invalid size parameter in buy()/sell()
    - FIX: Use size between 0.0-1.0 (fraction) or integer >= 1, or omit size entirely
 
-4. 'Indicator "FunctionName(...)" error':
+5. 'Indicator "FunctionName(...)" error':
    - CAUSE: Function not properly defined or imported
    - FIX: Ensure function is defined at module level (outside class) and accepts correct arguments
 
@@ -211,6 +228,7 @@ Requirements:
 - Ensure compatibility with backtesting.py.
 - Define indicator functions OUTSIDE the class.
 - Use pd.Series() conversion INSIDE indicator functions, not in self.I() calls.
+- Track entry_price manually (self.position has NO entry_price attribute).
 """
 
     def __init__(self, model: str = "gpt-4o"):
