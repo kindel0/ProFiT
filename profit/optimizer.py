@@ -276,12 +276,21 @@ class Optimizer:
             try:
                 test_metrics = self._evaluate_on_test(ind)
 
-                # Get validation metrics (cached or evaluate)
+                # Get validation metrics (cached or evaluate on demand)
                 val_fitness = None
                 val_sharpe = None
                 if ind.validation_fitness:
                     val_fitness = ind.validation_fitness.get("annualized_return")
                     val_sharpe = ind.validation_fitness.get("sharpe_ratio")
+                else:
+                    # Evaluate validation for strategies without cached metrics (e.g., seed)
+                    try:
+                        val_metrics = self._evaluate_on_validation(ind)
+                        val_fitness = val_metrics.get("annualized_return")
+                        val_sharpe = val_metrics.get("sharpe_ratio")
+                        ind.validation_fitness = val_metrics  # Cache for future use
+                    except Exception:
+                        pass  # Keep as None if validation fails
 
                 result = {
                     "rank": i + 1,
@@ -333,11 +342,19 @@ class Optimizer:
             return Results(final_population=[], history=[])
 
         seed_ind = Individual(chromosome=seed_chromosome, fitness=metrics)
-        
+
+        # Evaluate seed on validation set for tracking
+        try:
+            seed_val_metrics = self._evaluate_on_validation(seed_ind)
+            seed_ind.validation_fitness = seed_val_metrics
+            print(f"Seed Validation: {seed_val_metrics['annualized_return']:.2f}%")
+        except Exception as e:
+            print(f"Seed validation failed: {e}")
+
         # 2. Set MAS <- P0
         self.mas = p0
         print(f"Baseline Fitness (MAS): {self.mas:.2f}%")
-        
+
         # 3. Add seed to population
         self.population = [seed_ind]
         
